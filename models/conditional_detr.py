@@ -11,6 +11,8 @@
 # ------------------------------------------------------------------------
 
 import math
+import numpy as np
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -130,6 +132,8 @@ class SetCriterion(nn.Module):
         self.losses = losses
         self.focal_alpha = focal_alpha
 
+        self.unk_topk_indices = None
+
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
@@ -148,6 +152,10 @@ class SetCriterion(nn.Module):
         target_classes_onehot.scatter_(2, target_classes.unsqueeze(-1), 1)
 
         target_classes_onehot = target_classes_onehot[:, :, :-1]
+
+        # target_classes_onehot[self.unk_topk_indices, -1] = 1
+
+
         loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2) * \
                   src_logits.shape[1]
         losses = {'loss_ce': loss_ce}
@@ -243,12 +251,60 @@ class SetCriterion(nn.Module):
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
 
-    def forward(self, outputs, targets):
+    @staticmethod
+    def get_topk_indices(img_features, outputs, indices):
+        bz, c, h, w = img_features.shape
+        upsample = nn.Upsample(size=(h, w), mode='bilinear', align_corners=True)
+        mean_img_feat = torch.mean(img_features, 1)  # (16, 2048, 8, 8) -> (16, 1, 8, 8)
+
+        src_boxes = outputs.get('pred_boxes')
+        src_logits = outputs.get('pred_logits')
+
+        device = src_boxes.device
+
+        queries = torch.arange(src_boxes.shape[1])
+
+        unk_topk_indices = torch.empty((0, 5), dtype=torch.int64).to(device)
+
+        for i, (query_idx, tgt_idx) in enumerate(indices):
+            assert query_idx.shape == tgt_idx.shape, "optimized queries and targets number have to be matched"
+
+            other_idx = np.setdiff1d(queries.numpy(), query_idx)
+            upsample_src_boxes = box_ops.box_cxcywh_to_xyxy(src_boxes[i]) * \
+                                torch.tensor([w, h, w, h], dtype=torch.float32).to(device)  # shape -> (100, 4)
+
+            # (8, 8) -> (1, 1, 8, 8) -> (1, 1, h, w) -> (h, w)
+            up_img_feat = upsample(mean_img_feat[i].unsqueeze(0).unsqueeze(0)).squeeze(0).squeeze(0)
+
+            # Initialize means bounding box
+            means_bbox = torch.zeros(queries.shape[0])
+
+            for j in range(queries.shape[0]):
+                if j in other_idx:
+                    xmin, ymin, xmax, ymax = upsample_src_boxes[j, :].long()
+                    xmin = max(xmin, 0)
+                    ymin = max(ymin, 0)
+                    xmax = min(xmax, w)
+                    ymax = min(ymax, h)
+                    means_bbox[j] = torch.mean(up_img_feat[ymin:ymax, xmin:xmax])
+                    if torch.isnan(means_bbox[j]):
+                        means_bbox[j] = -1e10
+                else:
+                    means_bbox[j] = -1e10
+
+            means_bbox = means_bbox.to(device)
+            _, unmatched_topK_idx = torch.topk(means_bbox, 5)
+            unk_topk_indices = torch.cat([unk_topk_indices, unmatched_topK_idx.unsqueeze(0)], dim=0)
+
+        return unk_topk_indices
+
+    def forward(self, outputs, targets, img_features):
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
+             img_features: features from backbone
         """
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
 
@@ -256,7 +312,9 @@ class SetCriterion(nn.Module):
         indices = self.matcher(outputs_without_aux, targets)
         # indices -> [tensor: idx of output, tensor: idx of target]
 
-
+        #############################################################################
+        self.unk_topk_indices = self.get_topk_indices(img_features, outputs, indices)
+        #############################################################################
 
         # Compute the average number of target boxes across all nodes, for normalization purposes
         num_boxes = sum(len(t["labels"]) for t in targets)

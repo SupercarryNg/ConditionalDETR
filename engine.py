@@ -38,7 +38,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
         outputs = model(samples)
-        loss_dict = criterion(outputs, targets)
+        img_features, pos = model.backbone(samples)
+        # TODO img_features should be sigmoid
+        loss_dict = criterion(outputs, targets, img_features[0].tensors)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
