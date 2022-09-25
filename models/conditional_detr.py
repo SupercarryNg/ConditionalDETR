@@ -155,6 +155,7 @@ class SetCriterion(nn.Module):
         for i, unk_topk_idx in enumerate(self.unk_topk_indices):
             target_classes_onehot[i, unk_topk_idx, -1] = 0
 
+        # TODO num boxes -> 300 ?
         loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2) * \
                   src_logits.shape[1]
         losses = {'loss_ce': loss_ce}
