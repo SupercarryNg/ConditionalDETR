@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.tensorboard import SummaryWriter
 
 import datasets
 import util.misc as utils
@@ -200,11 +201,12 @@ def main(args):
 
     print("Start training")
     start_time = time.time()
+    writer = SummaryWriter()
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
         train_stats = train_one_epoch(
-            model, criterion, data_loader_train, optimizer, device, epoch,
+            model, criterion, data_loader_train, optimizer, device, writer, epoch,
             args.clip_max_norm)
         lr_scheduler.step()
         if args.output_dir:
@@ -221,6 +223,7 @@ def main(args):
                     'args': args,
                 }, checkpoint_path)
 
+        ##############################################
         # test_stats, coco_evaluator = evaluate(
         #     model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
         # )
@@ -244,10 +247,12 @@ def main(args):
         #             for name in filenames:
         #                 torch.save(coco_evaluator.coco_eval["bbox"].eval,
         #                            output_dir / "eval" / name)
+        ##############################################
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+    writer.close()
 
 
 if __name__ == '__main__':
