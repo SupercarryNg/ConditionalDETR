@@ -258,7 +258,6 @@ class SetCriterion(nn.Module):
         mean_img_feat = torch.mean(img_features, 1)  # (16, 2048, 8, 8) -> (16, 1, 8, 8)
 
         src_boxes = outputs.get('pred_boxes')
-        src_logits = outputs.get('pred_logits')
 
         device = src_boxes.device
 

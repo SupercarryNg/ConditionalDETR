@@ -1,8 +1,9 @@
-
-
 # IntelliJ project files
 .idea
 *.iml
+*.jpg
 out
 gen
 /data/
+/data/images/train2017/
+/voc_data/
