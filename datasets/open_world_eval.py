@@ -1,10 +1,11 @@
 import numpy as np
 import os
 import json
-import xml.etree.ElementTree as ET
+from collections import OrderedDict, defaultdict
 
 
 class OWEvaluator:
+    # voc_gt 裏有 CLASS Names，image set， known classes
     def __init__(self, voc_gt, iou_types):
         self.lines = None
         self.lines_cls = None
@@ -15,6 +16,34 @@ class OWEvaluator:
         self.all_recs = None
         self.tp_plus_fp_cs = None
         self.fp_os = None
+        self.unk_det_as_knowns = None
+        self.num_seen_classes = len(self.known_classes)
+
+    def compute_WI_at_many_recall_level(self, recalls, tp_plus_fp_cs, fp_os):
+        wi_at_recall = {}
+        for r in range(1, 10):
+            r = r / 10
+            wi = self.compute_WI_at_a_recall_level(recalls, tp_plus_fp_cs, fp_os, recall_level=r)
+            wi_at_recall[r] = wi
+        return wi_at_recall
+
+    def compute_WI_at_a_recall_level(self, recalls, tp_plus_fp_cs, fp_os, recall_level=0.5):
+        wi_at_iou = {}
+        for iou, recall in recalls.items():
+            tp_plus_fps = []
+            fps = []
+            for cls_id, rec in enumerate(recall):
+                if cls_id in range(self.num_seen_classes) and len(rec) > 0:
+                    index = min(range(len(rec)), key=lambda i: abs(rec[i] - recall_level))
+                    tp_plus_fp = tp_plus_fp_cs[iou][cls_id][index]
+                    tp_plus_fps.append(tp_plus_fp)
+                    fp = fp_os[iou][cls_id][index]
+                    fps.append(fp)
+            if len(tp_plus_fps) > 0:
+                wi_at_iou[iou] = np.mean(fps) / np.mean(tp_plus_fps)
+            else:
+                wi_at_iou[iou] = 0
+        return wi_at_iou
 
     def accumulate(self):
         for class_label_ind, class_label in enumerate(self.voc_gt.CLASS_NAMES):
@@ -28,11 +57,18 @@ class OWEvaluator:
             print(class_label + " has " + str(len(lines_by_class)) + " predictions.")
             ovthresh = 50
 
-            self.rec, self.tp_plus_fp_closed_set, self.fp_open_set = voc_eval(lines_by_class, self.voc_gt.annotations, \
+            self.rec,self.unk_det_as_known, self.tp_plus_fp_closed_set, self.fp_open_set = voc_eval(lines_by_class, self.voc_gt.annotations, \
                                                      self.voc_gt.image_set, class_label,ovthresh= .5,known_classes=self.known_classes)
             self.all_recs[ovthresh].append(self.rec)
             self.tp_plus_fp_cs[ovthresh].append(self.tp_plus_fp_closed_set)
             self.fp_os[ovthresh].append(self.fp_open_set)
+            self.unk_det_as_knowns[ovthresh].append(self.unk_det_as_known)
+
+    def summarize(self):
+        wi = self.compute_WI_at_many_recall_level(self.all_recs, self.tp_plus_fp_cs, self.fp_os)
+        print('Wilderness Impact: ' + str(wi))
+        total_num_unk_det_as_known = {iou: np.sum(x) for iou, x in self.unk_det_as_knowns.items()}
+        print('Absolute OSE (total_num_unk_det_as_known): ' + str(total_num_unk_det_as_known))
 
 '''
 lines_by_class, self.voc_gt.annotations, self.voc_gt.image_set,\
@@ -80,6 +116,32 @@ def iou(BBGT, bb):
     ovmax = np.max(overlaps)
     jmax = np.argmax(overlaps)
     return ovmax, jmax
+
+def compute_WI_at_many_recall_level(recalls, tp_plus_fp_cs, fp_os):
+    wi_at_recall = {}
+    for r in range(1, 10):
+        r = r / 10
+        wi = compute_WI_at_a_recall_level(recalls, tp_plus_fp_cs, fp_os, recall_level=r)
+        wi_at_recall[r] = wi
+    return wi_at_recall
+
+def compute_WI_at_a_recall_level(recalls, tp_plus_fp_cs, fp_os, recall_level=0.5):
+    wi_at_iou = {}
+    for iou, recall in recalls.items():
+        tp_plus_fps = []
+        fps = []
+        for cls_id, rec in enumerate(recall):
+            if cls_id in range(1) and len(rec) > 0:
+                index = min(range(len(rec)), key=lambda i: abs(rec[i] - recall_level))
+                tp_plus_fp = tp_plus_fp_cs[iou][cls_id][index]
+                tp_plus_fps.append(tp_plus_fp)
+                fp = fp_os[iou][cls_id][index]
+                fps.append(fp)
+        if len(tp_plus_fps) > 0:
+            wi_at_iou[iou] = np.mean(fps) / np.mean(tp_plus_fps)
+        else:
+            wi_at_iou[iou] = 0
+    return wi_at_iou
 
 def voc_eval(detpath,
              classname,
@@ -174,7 +236,9 @@ def voc_eval(detpath,
 
     # compute precision recall
     fp = np.cumsum(fp)
+    # tp = [1,1,0,1,0,1,0,1,0,1,1]
     tp = np.cumsum(tp)
+    # tp = [1,2,2,3,3,4,4,5,5,6,7,...,75], 75 的idx 130
     rec = tp / float(npos)
     # avoid divide by zero in case the first detection matches a difficult
 
@@ -216,7 +280,17 @@ def voc_eval(detpath,
     return rec, is_unk_sum, tp_plus_fp_closed_set, fp_open_set
 
 if __name__ == '__main__':
+    # evaluator = OWEvaluator()
     rec, is_unk_sum, tp_plus_fp_closed_set, fp_open_set = voc_eval('../predictions/pred_{}.txt',7,None)
+    all_rec = defaultdict(list)
+    all_rec[50].append(rec)
+    tp_plus_fp_closed_sets = defaultdict(list)
+    tp_plus_fp_closed_sets[50].append(tp_plus_fp_closed_set)
+    fp_open_sets = defaultdict(list)
+    fp_open_sets[50].append(fp_open_set)
+    wi_at_recall = compute_WI_at_many_recall_level(all_rec,  tp_plus_fp_closed_sets, fp_open_sets)
+
+
 
 
 
