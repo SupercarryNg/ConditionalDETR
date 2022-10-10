@@ -116,12 +116,36 @@ def draw_bbox(tgt):
     img.show()
 
 
+class Voc_GT(object):
+    CLASS_NAMES = {'person': 0, 'bird': 1, 'cat': 2, 'cow': 3, 'dog': 4, 'horse': 5, 'sheep': 6, 'aeroplane': 7,
+                   'bicycle': 8, 'boat': 9, 'bus': 10, 'car': 11, 'motorbike': 12, 'train': 13, 'bottle': 14,
+                   'tvmonitor': 15, 'pottedplant': 16, 'unknown': -1}
+
+    # CLASS_NAMES = ['person', 'bird', 'cat', 'cow', 'dog', 'horse', 'sheep', 'aeroplane',
+    #                'bicycle', 'boat', 'bus', 'car', 'motorbike', 'train', 'bottle',
+    #                'chair', 'diningtable', 'pottedplant', 'sofa', 'tvmonitor']
+
+    image_set = 'voc_data/images/test'
+    annotations = 'voc_data/annotation/test'
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
     args = parser.parse_args()
     args.voc_path = '../voc_data/'
     train_set = build(image_set='train', args=args)
-    print(next(iter(train_set)))
+    # loader = DataLoader(train_set, )
+    # count = 0
+    # for idx, (_, tgt) in enumerate(train_set):
+    #     print(idx)
+    #     if len(tgt['boxes']) == 0:
+    #         count += 1
+    # print(count)
+
+    # voc_gt = Voc_GT()
+    # print(voc_gt.CLASS_NAMES)
+    # print(voc_gt.image_set)
+    # print(voc_gt.annotations)
 
 
 

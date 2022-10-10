@@ -1,23 +1,55 @@
-import numpy as np
-import os
 import json
-from collections import OrderedDict, defaultdict
+import os
+from collections import defaultdict
+
+import numpy as np
 
 
 class OWEvaluator:
     # voc_gt 裏有 CLASS Names，image set， known classes
-    def __init__(self, voc_gt, iou_types):
-        self.lines = None
-        self.lines_cls = None
-        self.voc_gt.CLASS_NAMES = None
+    def __init__(self, voc_gt):
+        self.lines = []
+        self.lines_cls = []
+
+        self.voc_gt = voc_gt
         self.known_classes = self.voc_gt.CLASS_NAMES
-        # imageset txt file
-        self.voc_gt.image_set = None
-        self.all_recs = None
-        self.tp_plus_fp_cs = None
-        self.fp_os = None
-        self.unk_det_as_knowns = None
+
+        self.rec = []
+        self.unk_det_as_known = []
+        self.tp_plus_fp_closed_set = []
+        self.fp_open_set = []
+
+        self.all_recs = defaultdict(list)
+        self.tp_plus_fp_cs = defaultdict(list)
+        self.fp_os = defaultdict(list)
+
+        self.unk_det_as_knowns = defaultdict(list)
         self.num_seen_classes = len(self.known_classes)
+
+    def update(self, predictions):
+        # for img_id, pred in predictions.items():
+        #     pred_boxes, pred_labels, pred_scores = [pred[k].cpu() for k in ['boxes', 'labels', 'scores']]
+        #     classes = pred_labels.tolist()
+        #     for (xmin, ymin, xmax, ymax), cls, score in zip(pred_boxes.tolist(), classes, pred_scores.tolist()):
+        #         xmin += 1
+        #         ymin += 1
+        #         self.lines.append(f"{img_id} {score:.3f} {xmin:.1f} {ymin:.1f} {xmax:.1f} {ymax:.1f}")
+        #         self.lines_cls.append(cls)
+
+        img_id, preds = predictions.popitem()  # we only have one key value pair in the dict
+        if preds is not None:
+            for pred in preds:
+                pred_boxes, pred_labels, pred_scores = [pred[k].cpu() for k in ['boxes', 'labels', 'scores']]
+
+                xmin, ymin, xmax, ymax = pred_boxes.tolist()
+                xmin += 1
+                ymin += 1
+
+                score = pred_scores.tolist()
+                cls = pred_labels.tolist()
+
+                self.lines.append(f"{img_id} {score:.3f} {xmin:.1f} {ymin:.1f} {xmax:.1f} {ymax:.1f}")
+                self.lines_cls.append(cls)
 
     def compute_WI_at_many_recall_level(self, recalls, tp_plus_fp_cs, fp_os):
         wi_at_recall = {}
@@ -46,23 +78,29 @@ class OWEvaluator:
         return wi_at_iou
 
     def accumulate(self):
-        for class_label_ind, class_label in enumerate(self.voc_gt.CLASS_NAMES):
+        for class_label, class_label_ind in self.voc_gt.CLASS_NAMES.items():
             '''
                 self.lines.append(f"{image_id} {score:.3f} {xmin:.1f} {ymin:.1f} {xmax:.1f} {ymax:.1f}")
                 self.lines_cls.append(cls)
             '''
-            lines_by_class = [l + '\n' for l, c in zip(self.lines, self.lines_cls.tolist()) if c == class_label_ind]
+            lines_by_class = [l + '\n' for l, c in zip(self.lines, self.lines_cls) if c == class_label_ind]
             if len(lines_by_class) == 0:
                 lines_by_class = []
             print(class_label + " has " + str(len(lines_by_class)) + " predictions.")
+
             ovthresh = 50
 
-            self.rec,self.unk_det_as_known, self.tp_plus_fp_closed_set, self.fp_open_set = voc_eval(lines_by_class, self.voc_gt.annotations, \
-                                                     self.voc_gt.image_set, class_label,ovthresh= .5,known_classes=self.known_classes)
+            self.rec, self.unk_det_as_known, self.tp_plus_fp_closed_set, self.fp_open_set = voc_eval(lines_by_class,
+                                                                                                     class_label,
+                                                                                                     self.voc_gt.image_set,
+                                                                                                     self.voc_gt.annotations,
+                                                                                                     ovthresh=ovthresh / 100,
+                                                                                                     )
             self.all_recs[ovthresh].append(self.rec)
-            self.tp_plus_fp_cs[ovthresh].append(self.tp_plus_fp_closed_set)
-            self.fp_os[ovthresh].append(self.fp_open_set)
-            self.unk_det_as_knowns[ovthresh].append(self.unk_det_as_known)
+            if class_label != 'unknown':
+                self.tp_plus_fp_cs[ovthresh].append(self.tp_plus_fp_closed_set)
+                self.fp_os[ovthresh].append(self.fp_open_set)
+                self.unk_det_as_knowns[ovthresh].append(self.unk_det_as_known)
 
     def summarize(self):
         wi = self.compute_WI_at_many_recall_level(self.all_recs, self.tp_plus_fp_cs, self.fp_os)
@@ -70,10 +108,7 @@ class OWEvaluator:
         total_num_unk_det_as_known = {iou: np.sum(x) for iou, x in self.unk_det_as_knowns.items()}
         print('Absolute OSE (total_num_unk_det_as_known): ' + str(total_num_unk_det_as_known))
 
-'''
-lines_by_class, self.voc_gt.annotations, self.voc_gt.image_set,\
-class_label, ovthresh=ovthresh / 100.0,known_classes=self.known_classes
-'''
+
 # assumes detections are in detpath.format(classname)
 # assumes annotations are in annopath.format(imagename)
 # assumes imagesetfile is a text file with each line an image name
@@ -98,6 +133,7 @@ def parse_json(imagenames, root_dir='voc_data/annotation/test'):
 
     return recs
 
+
 def iou(BBGT, bb):
     ixmin = np.maximum(BBGT[:, 0], bb[0])
     iymin = np.maximum(BBGT[:, 1], bb[1])
@@ -117,47 +153,30 @@ def iou(BBGT, bb):
     jmax = np.argmax(overlaps)
     return ovmax, jmax
 
-def compute_WI_at_many_recall_level(recalls, tp_plus_fp_cs, fp_os):
-    wi_at_recall = {}
-    for r in range(1, 10):
-        r = r / 10
-        wi = compute_WI_at_a_recall_level(recalls, tp_plus_fp_cs, fp_os, recall_level=r)
-        wi_at_recall[r] = wi
-    return wi_at_recall
-
-def compute_WI_at_a_recall_level(recalls, tp_plus_fp_cs, fp_os, recall_level=0.5):
-    wi_at_iou = {}
-    for iou, recall in recalls.items():
-        tp_plus_fps = []
-        fps = []
-        for cls_id, rec in enumerate(recall):
-            if cls_id in range(1) and len(rec) > 0:
-                index = min(range(len(rec)), key=lambda i: abs(rec[i] - recall_level))
-                tp_plus_fp = tp_plus_fp_cs[iou][cls_id][index]
-                tp_plus_fps.append(tp_plus_fp)
-                fp = fp_os[iou][cls_id][index]
-                fps.append(fp)
-        if len(tp_plus_fps) > 0:
-            wi_at_iou[iou] = np.mean(fps) / np.mean(tp_plus_fps)
-        else:
-            wi_at_iou[iou] = 0
-    return wi_at_iou
 
 def voc_eval(detpath,
              classname,
-             imagesetfile,
-             annopath = '../voc_data/annotation/test',
-             ovthresh=0.5,
-             known_classes=None):
+             imagepath='voc_data/images/test',
+             annopath='voc_data/annotation/test',
+             ovthresh=0.5
+             ):
+    """
 
-
-    imagenames = ['2007_000033.jpg']
+    :param detpath: self.lines : list
+    :param classname: actually class id here -1 for unk, 0 for person
+    :param imagepath: the root dir to test images
+    :param annopath: the root dir to test annotation
+    :param ovthresh: IOU threshold
+    :return:
+    """
+    imagenames = os.listdir(imagepath)
     # load  annotations
-    '''
-    recs['2007.jpg'] =
-    [{'name':'person'(0),'difficult':0/1,'bbox':[23,33,345,233]}, {'name':'bird','difficult':0/1,'bbox':[23,33,345,233]},]
-    '''
-    recs = parse_json(imagenames, root_dir= annopath)
+
+    # recs['2007.jpg'] =
+    #                    [{'name':'person'(0),'difficult':0/1,'bbox':[23,33,345,233]},
+    #                     {'name':'bird','difficult':0/1,'bbox':[23,33,345,233]}]
+
+    recs = parse_json(imagenames, root_dir=annopath)
 
     # extract gt objects for this class
     class_recs = {}
@@ -180,9 +199,7 @@ def voc_eval(detpath,
     # class_recs['2007.jpg'] = {'bbox':,'difficult':,'det':}
 
     # read detections
-    detfile = detpath.format(classname)
-    with open(detfile, 'r') as f:
-        lines = f.readlines()
+    lines = detpath
 
     # lines belong to the same class
 
@@ -195,8 +212,7 @@ def voc_eval(detpath,
     if len(splitlines) == 0:
         BB = np.array([[float(z) for z in x[2:]] for x in splitlines]).reshape(-1, 4)
     else:
-        BB = np.array([[float(z) for z in x[2:]] for x in splitlines])#.reshape(-1, 4)
-
+        BB = np.array([[float(z) for z in x[2:]] for x in splitlines])  # .reshape(-1, 4)
 
     # sort by confidence, 降序排列返回index
     sorted_ind = np.argsort(-confidence)
@@ -214,7 +230,7 @@ def voc_eval(detpath,
 
     for d in range(nd):
         R = class_recs[image_ids[d]]
-        # R = class_recs['2008.jpg'] = {'bbox':[[23,33,345,233],[23,33,345,233],...],'difficult':,'det':} targts
+        # R = class_recs['2008.jpg'] = {'bbox':[[23,33,345,233],[23,33,345,233],...],'difficult':,'det':} targets
         bb = BB[d, :].astype(float)
         # bb = [23,45,342,454] prediction
         ovmax = -np.inf
@@ -274,25 +290,19 @@ def voc_eval(detpath,
 
     is_unk_sum = np.sum(is_unk)
     # is_unk_sum 就是 A-OSE
-    tp_plus_fp_closed_set = tp+fp
+    tp_plus_fp_closed_set = tp + fp
     fp_open_set = np.cumsum(is_unk)
 
     return rec, is_unk_sum, tp_plus_fp_closed_set, fp_open_set
 
-if __name__ == '__main__':
-    # evaluator = OWEvaluator()
-    rec, is_unk_sum, tp_plus_fp_closed_set, fp_open_set = voc_eval('../predictions/pred_{}.txt',7,None)
-    all_rec = defaultdict(list)
-    all_rec[50].append(rec)
-    tp_plus_fp_closed_sets = defaultdict(list)
-    tp_plus_fp_closed_sets[50].append(tp_plus_fp_closed_set)
-    fp_open_sets = defaultdict(list)
-    fp_open_sets[50].append(fp_open_set)
-    wi_at_recall = compute_WI_at_many_recall_level(all_rec,  tp_plus_fp_closed_sets, fp_open_sets)
-
-
-
-
-
-
-
+#
+# if __name__ == '__main__':
+#     # evaluator = OWEvaluator()
+#     rec, is_unk_sum, tp_plus_fp_closed_set, fp_open_set = voc_eval('../predictions/pred_{}.txt', 7, None)
+#     all_rec = defaultdict(list)
+#     all_rec[50].append(rec)
+#     tp_plus_fp_closed_sets = defaultdict(list)
+#     tp_plus_fp_closed_sets[50].append(tp_plus_fp_closed_set)
+#     fp_open_sets = defaultdict(list)
+#     fp_open_sets[50].append(fp_open_set)
+#     wi_at_recall = compute_WI_at_many_recall_level(all_rec, tp_plus_fp_closed_sets, fp_open_sets)

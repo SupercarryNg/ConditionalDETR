@@ -22,6 +22,7 @@ from torch.utils.tensorboard import SummaryWriter
 import datasets
 import util.misc as utils
 from datasets import build_dataset, get_coco_api_from_dataset
+from datasets.voc import Voc_GT
 from engine import evaluate, train_one_epoch
 from models import build_model
 
@@ -32,7 +33,7 @@ def get_args_parser():
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--epochs', default=50, type=int)
+    parser.add_argument('--epochs', default=1, type=int)
     parser.add_argument('--lr_drop', default=40, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
@@ -104,7 +105,7 @@ def get_args_parser():
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
-    parser.add_argument('--eval', default=False, action='store_true')
+    parser.add_argument('--eval', default=True, action='store_true')
     parser.add_argument('--num_workers', default=0, type=int)
 
     # distributed training parameters
@@ -166,13 +167,12 @@ def main(args):
 
     data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
                                    collate_fn=utils.collate_fn, num_workers=args.num_workers)
-    data_loader_val = DataLoader(dataset_val, args.batch_size, sampler=sampler_val,
+    # batch size is set to 1 for post processor
+    data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
                                  drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
 
-    if args.dataset_file == "coco_panoptic":
-        # We also evaluate AP during panoptic training, on original coco DS
-        coco_val = datasets.coco.build("val", args)
-        base_ds = get_coco_api_from_dataset(coco_val)
+    if args.dataset_file == 'voc':
+        base_ds = Voc_GT()
     else:
         base_ds = get_coco_api_from_dataset(dataset_val)
 
@@ -194,10 +194,10 @@ def main(args):
             args.start_epoch = checkpoint['epoch'] + 1
 
     if args.eval:
-        test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
-                                              data_loader_val, base_ds, device, args.output_dir)
-        if args.output_dir:
-            utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+        evaluate(model, criterion, postprocessors, data_loader_val, base_ds, device)
+        # if args.output_dir:
+        #     # TODO what is coco_eval["bbox"]
+        #     utils.save_on_master(voc_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
         return
 
     print("Start training")
@@ -225,29 +225,7 @@ def main(args):
                 }, checkpoint_path)
 
         ##############################################
-        # test_stats, coco_evaluator = evaluate(
-        #     model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
-        # )
-
-        # log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-        #              **{f'test_{k}': v for k, v in test_stats.items()},
-        #              'epoch': epoch,
-        #              'n_parameters': n_parameters}
-
-        # if args.output_dir and utils.is_main_process():
-        #     with (output_dir / "log.txt").open("a") as f:
-        #         f.write(json.dumps(log_stats) + "\n")
-        #
-        #     # for evaluation logs
-        #     if coco_evaluator is not None:
-        #         (output_dir / 'eval').mkdir(exist_ok=True)
-        #         if "bbox" in coco_evaluator.coco_eval:
-        #             filenames = ['latest.pth']
-        #             if epoch % 50 == 0:
-        #                 filenames.append(f'{epoch:03}.pth')
-        #             for name in filenames:
-        #                 torch.save(coco_evaluator.coco_eval["bbox"].eval,
-        #                            output_dir / "eval" / name)
+        evaluate(model, criterion, postprocessors, data_loader_val, base_ds, device)
         ##############################################
 
     total_time = time.time() - start_time

@@ -381,6 +381,49 @@ class PostProcess(nn.Module):
         return results
 
 
+class OWPostProcess(nn.Module):
+    def __init__(self, score_threshold=0.2, unk_score=0.2):
+        super(OWPostProcess, self).__init__()
+        self.score_threshold = score_threshold
+        self.unk_score = unk_score
+
+    @torch.no_grad()
+    def forward(self, outputs, target_sizes):
+        out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
+
+        assert len(out_logits) == len(target_sizes)
+        assert target_sizes.shape[1] == 2
+        assert out_logits.shape[0] == 1, "Inference only support batch size == 1"
+
+        prob = out_logits.sigmoid().squeeze(0).cpu()
+
+        # Get known objects
+        values, labels = torch.max(prob[..., :-1], dim=-1)
+
+        indices = np.arange(values.shape[-1])
+        overthr_indices = indices[values.reshape(-1) >= self.score_threshold]
+
+        labels = labels[overthr_indices]
+        scores = values[overthr_indices]
+
+        boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
+        boxes = boxes.squeeze(0)
+        img_h, img_w = target_sizes.unbind(1)
+        scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1).squeeze(0)
+        boxes = boxes * scale_fct[None, :]
+
+        results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes[overthr_indices])]
+
+        # Find Unknown Objects
+        other_indices = np.setdiff1d(indices, overthr_indices)
+        for other_idx, q in zip(other_indices, prob[other_indices]):
+            if 1 - q[-1] >= self.unk_score and (1 - q[:-1] <= self.score_threshold).all():
+                score = 1 - q[-1]
+                results.append({'scores': score, 'labels': torch.tensor(-1), 'boxes': boxes[other_idx]})
+
+        return results
+
+
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""
 
@@ -410,6 +453,10 @@ def build(args):
         # for panoptic, we just add a num_classes that is large enough to hold
         # max_obj_id + 1, but the exact value doesn't really matter
         num_classes = 250
+
+    if args.dataset_file == 'voc':
+        num_classes = 21
+
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
@@ -444,7 +491,7 @@ def build(args):
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              focal_alpha=args.focal_alpha, losses=losses)
     criterion.to(device)
-    postprocessors = {'bbox': PostProcess()}
+    postprocessors = {'bbox': OWPostProcess(score_threshold=0.02, unk_score=0.02)}
     if args.masks:
         postprocessors['segm'] = PostProcessSegm()
         if args.dataset_file == "coco_panoptic":
