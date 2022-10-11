@@ -491,7 +491,7 @@ def build(args):
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              focal_alpha=args.focal_alpha, losses=losses)
     criterion.to(device)
-    postprocessors = {'bbox': OWPostProcess(score_threshold=0.8, unk_score=0.8)}
+    postprocessors = {'bbox': OWPostProcess(score_threshold=0.03, unk_score=0.8)}
     if args.masks:
         postprocessors['segm'] = PostProcessSegm()
         if args.dataset_file == "coco_panoptic":
