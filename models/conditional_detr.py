@@ -455,7 +455,7 @@ def build(args):
         num_classes = 250
 
     if args.dataset_file == 'voc':
-        num_classes = 21
+        num_classes = 18
 
     device = torch.device(args.device)
 
@@ -491,7 +491,7 @@ def build(args):
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              focal_alpha=args.focal_alpha, losses=losses)
     criterion.to(device)
-    postprocessors = {'bbox': OWPostProcess(score_threshold=0.02, unk_score=0.02)}
+    postprocessors = {'bbox': OWPostProcess(score_threshold=0.8, unk_score=0.8)}
     if args.masks:
         postprocessors['segm'] = PostProcessSegm()
         if args.dataset_file == "coco_panoptic":

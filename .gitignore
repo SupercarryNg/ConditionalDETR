@@ -8,3 +8,4 @@ gen
 /data/images/train2017/
 /voc_data/
 /test_block.py
+/checkpoints/
