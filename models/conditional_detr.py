@@ -158,6 +158,7 @@ class SetCriterion(nn.Module):
         # TODO num boxes -> 300 ?
         loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2) * \
                   src_logits.shape[1]
+        # loss_ce = F.mse_loss(src_logits.sigmoid(), target_classes_onehot) / src_logits.shape[0]
         losses = {'loss_ce': loss_ce}
 
         if log:
@@ -252,6 +253,7 @@ class SetCriterion(nn.Module):
         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
 
     @staticmethod
+    @torch.no_grad()
     def get_topk_indices(img_features, outputs, indices):
         bz, c, h, w = img_features.shape
         upsample = nn.Upsample(size=(h, w), mode='bilinear', align_corners=True)
@@ -263,7 +265,7 @@ class SetCriterion(nn.Module):
 
         queries = torch.arange(src_boxes.shape[1])
 
-        unk_topk_indices = torch.empty((0, 5), dtype=torch.int64).to(device)
+        unk_topk_indices = torch.empty((0, 2), dtype=torch.int64).to(device)
 
         for i, (query_idx, tgt_idx) in enumerate(indices):
             assert query_idx.shape == tgt_idx.shape, "optimized queries and targets number have to be matched"
@@ -292,7 +294,7 @@ class SetCriterion(nn.Module):
                     means_bbox[j] = -1e10
 
             means_bbox = means_bbox.to(device)
-            _, unmatched_topK_idx = torch.topk(means_bbox, 5)
+            _, unmatched_topK_idx = torch.topk(means_bbox, 2)
             unk_topk_indices = torch.cat([unk_topk_indices, unmatched_topK_idx.unsqueeze(0)], dim=0)
 
         return unk_topk_indices
@@ -491,7 +493,7 @@ def build(args):
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              focal_alpha=args.focal_alpha, losses=losses)
     criterion.to(device)
-    postprocessors = {'bbox': OWPostProcess(score_threshold=0.03, unk_score=0.8)}
+    postprocessors = {'bbox': OWPostProcess(score_threshold=0.08, unk_score=0.8)}
     if args.masks:
         postprocessors['segm'] = PostProcessSegm()
         if args.dataset_file == "coco_panoptic":

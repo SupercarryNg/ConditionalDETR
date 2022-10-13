@@ -33,7 +33,7 @@ def get_args_parser():
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
     parser.add_argument('--batch_size', default=1, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--epochs', default=1, type=int)
+    parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--lr_drop', default=40, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
@@ -58,7 +58,7 @@ def get_args_parser():
                         help="Intermediate size of the feedforward layers in the transformer blocks")
     parser.add_argument('--hidden_dim', default=256, type=int,
                         help="Size of the embeddings (dimension of the transformer)")
-    parser.add_argument('--dropout', default=0.1, type=float,
+    parser.add_argument('--dropout', default=0.0, type=float,
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
@@ -102,10 +102,10 @@ def get_args_parser():
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument('--resume', default='checkpoints/checkpoint.pth', help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
-    parser.add_argument('--eval', default=True, action='store_true')
+    parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--num_workers', default=0, type=int)
 
     # distributed training parameters
