@@ -38,16 +38,12 @@ class OWEvaluator:
 
         img_id, preds = predictions.popitem()  # we only have one key value pair in the dict
         if preds is not None:
-            for pred in preds:
-                pred_boxes, pred_labels, pred_scores = [pred[k].cpu() for k in ['boxes', 'labels', 'scores']]
+            pred_boxes, pred_labels, pred_scores = [preds[0][k].cpu() for k in ['boxes', 'labels', 'scores']]
+            classes = pred_labels.tolist()
 
-                xmin, ymin, xmax, ymax = pred_boxes.tolist()
+            for (xmin, ymin, xmax, ymax), cls, score in zip(pred_boxes.tolist(), classes, pred_scores.tolist()):
                 xmin += 1
                 ymin += 1
-
-                score = pred_scores.tolist()
-                cls = pred_labels.tolist()
-
                 self.lines.append(f"{img_id} {score:.3f} {xmin:.1f} {ymin:.1f} {xmax:.1f} {ymax:.1f}")
                 self.lines_cls.append(cls)
 
@@ -295,7 +291,7 @@ def voc_eval(detpath,
 
     return rec, is_unk_sum, tp_plus_fp_closed_set, fp_open_set
 
-#
+
 # if __name__ == '__main__':
 #     # evaluator = OWEvaluator()
 #     rec, is_unk_sum, tp_plus_fp_closed_set, fp_open_set = voc_eval('../predictions/pred_{}.txt', 7, None)

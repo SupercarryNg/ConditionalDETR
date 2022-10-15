@@ -16,8 +16,13 @@ import sys
 from typing import Iterable
 
 import torch
+from torchvision import transforms
+from torchvision.io import read_image
+from torchvision.utils import draw_bounding_boxes
+import numpy as np
 
 import util.misc as utils
+from datetime import datetime
 from datasets.open_world_eval import OWEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
 
@@ -80,9 +85,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def evaluate(model, criterion, postprocessors, data_loader, base_ds, device):
+def evaluate(model, postprocessors, data_loader, base_ds, device):
     model.eval()
-    criterion.eval()
+    # criterion.eval()
 
     print('Start Testing')
 
@@ -106,6 +111,36 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device):
         voc_evaluator.summarize()
 
 
+@torch.no_grad()
+def visualization(model, postprocessors, data_loader, device, sample_ratio=0.1):
+    print('Starting Visualization')
+    model.eval()
+    output_dir = 'Results/visuals/{}/'.format(datetime.now().strftime("%Y%m%d_%H%M"))
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    sample_size = int(len(data_loader) * sample_ratio)
+    sample_indices = np.random.choice(np.arange(len(data_loader)), size=sample_size)
+
+    for idx, (samples, targets) in enumerate(data_loader):
+        if idx in sample_indices:
+            samples = samples.to(device)
+            targets = {k: v.to(device) if k != 'image_id' else v for k, v in targets[0].items()}
+
+            outputs = model(samples)
+
+            orig_target_sizes = torch.stack([targets["orig_size"]], dim=0)
+            results = postprocessors['bbox'](outputs, orig_target_sizes)
+
+            img = read_image(os.path.join('voc_data/images/test/', targets.get('image_id')))
+            for result in results:
+                img = draw_bounding_boxes(img, result.get('boxes').to('cpu').unsqueeze(0),
+                                          labels=[str(result.get('labels').item())])
+            img = transforms.ToPILImage()(img)
+            img.save(os.path.join(output_dir, targets.get('image_id')))
+
+        else:
+            continue
 
 
 

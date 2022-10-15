@@ -23,7 +23,7 @@ import datasets
 import util.misc as utils
 from datasets import build_dataset, get_coco_api_from_dataset
 from datasets.voc import Voc_GT
-from engine import evaluate, train_one_epoch
+from engine import evaluate, train_one_epoch, visualization
 from models import build_model
 
 
@@ -62,7 +62,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=300, type=int,
+    parser.add_argument('--num_queries', default=100, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
 
@@ -105,13 +105,18 @@ def get_args_parser():
     parser.add_argument('--resume', default='checkpoints/checkpoint.pth', help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
-    parser.add_argument('--eval', default=False, action='store_true')
+    parser.add_argument('--eval', default=True, action='store_true')
+    parser.add_argument('--visual', default=False, action='store_true')
     parser.add_argument('--num_workers', default=0, type=int)
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+
+    # open world parameters
+    parser.add_argument('--top_unk', default=2, type=int)
+    parser.add_argument('--num_classes', default=18, type=int)
     return parser
 
 
@@ -193,11 +198,12 @@ def main(args):
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
 
+    if args.visual:
+        visualization(model, postprocessors, data_loader_val, device, sample_ratio=0.01)
+        return
+
     if args.eval:
-        evaluate(model, criterion, postprocessors, data_loader_val, base_ds, device)
-        # if args.output_dir:
-        #     # TODO what is coco_eval["bbox"]
-        #     utils.save_on_master(voc_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
+        evaluate(model, postprocessors, data_loader_val, base_ds, device)
         return
 
     print("Start training")
@@ -225,7 +231,7 @@ def main(args):
                 }, checkpoint_path)
 
         ##############################################
-        evaluate(model, criterion, postprocessors, data_loader_val, base_ds, device)
+        evaluate(model, postprocessors, data_loader_val, base_ds, device)
         ##############################################
 
     total_time = time.time() - start_time

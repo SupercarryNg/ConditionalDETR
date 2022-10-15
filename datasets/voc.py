@@ -119,7 +119,7 @@ def draw_bbox(tgt):
 class Voc_GT(object):
     CLASS_NAMES = {'person': 0, 'bird': 1, 'cat': 2, 'cow': 3, 'dog': 4, 'horse': 5, 'sheep': 6, 'aeroplane': 7,
                    'bicycle': 8, 'boat': 9, 'bus': 10, 'car': 11, 'motorbike': 12, 'train': 13, 'bottle': 14,
-                   'tvmonitor': 15, 'pottedplant': 16, 'unknown': -1}
+                   'tvmonitor': 15, 'pottedplant': 16, 'unknown': 17}
 
     # CLASS_NAMES = ['person', 'bird', 'cat', 'cow', 'dog', 'horse', 'sheep', 'aeroplane',
     #                'bicycle', 'boat', 'bus', 'car', 'motorbike', 'train', 'bottle',
