@@ -92,6 +92,8 @@ class ConditionalDETR(nn.Module):
         hs, reference = self.transformer(self.input_proj(src), mask, self.query_embed.weight, pos[-1])
 
         reference_before_sigmoid = inverse_sigmoid(reference)
+
+        outputs_classes = []
         outputs_coords = []
         outputs_classes_nc = []
         for lvl in range(hs.shape[0]):
@@ -100,13 +102,17 @@ class ConditionalDETR(nn.Module):
             outputs_coord = tmp.sigmoid()
             outputs_coords.append(outputs_coord)
 
+            outputs_class = self.class_embed(hs[lvl])
+            outputs_classes.append(outputs_class)
+
             outputs_class_nc = self.nc_class_embed(hs[lvl])
             outputs_classes_nc.append(outputs_class_nc)
 
+        outputs_class = torch.stack(outputs_classes)
         outputs_coord = torch.stack(outputs_coords)
         output_class_nc = torch.stack(outputs_classes_nc)
 
-        outputs_class = self.class_embed(hs)
+        # outputs_class = self.class_embed(hs)
         out = {'pred_logits': outputs_class[-1], 'pred_nc_logits': output_class_nc[-1], 'pred_boxes': outputs_coord[-1]}
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord, output_class_nc=None)
@@ -155,8 +161,6 @@ class SetCriterion(nn.Module):
         self.top_unk = args.top_unk  # we use 2 in voc dataset
         # self.bbox_thresh = args.bbox_thresh
 
-        self.unk_topk_indices = None
-
     def loss_NC_labels(self, outputs, targets, indices, num_boxes, owod_targets, owod_indices, log=True):
         """Novelty classification loss
         target labels will contain class as 1
@@ -172,10 +176,11 @@ class SetCriterion(nn.Module):
         target_classes = torch.full(src_logits.shape[:2], 1, dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
 
-        target_classes_onehot = torch.zeros([src_logits.shape[0], src_logits.shape[1], src_logits.shape[2] + 1], dtype=src_logits.dtype, layout=src_logits.layout, device=src_logits.device)
+        target_classes_onehot = torch.zeros([src_logits.shape[0], src_logits.shape[1], src_logits.shape[2] + 1],
+                                            dtype=src_logits.dtype, layout=src_logits.layout, device=src_logits.device)
         target_classes_onehot.scatter_(2, target_classes.unsqueeze(-1), 1)
 
-        target_classes_onehot = target_classes_onehot[:,:,:-1]
+        target_classes_onehot = target_classes_onehot[:, :, :-1]
         loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2) * src_logits.shape[1]
 
         losses = {'loss_NC': loss_ce}
@@ -186,7 +191,7 @@ class SetCriterion(nn.Module):
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
         assert 'pred_logits' in outputs
-        ## comment lines from 317-320 when running for oracle settings
+        # comment lines from 317-320 when running for oracle settings
         temp_src_logits = outputs['pred_logits'].clone()
         # temp_src_logits[:, :, self.invalid_cls_logits] = -10e10
         src_logits = temp_src_logits

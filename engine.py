@@ -126,8 +126,11 @@ def visualization(model, postprocessors, data_loader, device, sample_ratio=0.1):
         if idx in sample_indices:
             samples = samples.to(device)
             targets = {k: v.to(device) if k != 'image_id' else v for k, v in targets[0].items()}
+            top_k = len(targets['boxes'])
 
             outputs = model(samples)
+
+            indices = outputs['pred_logits'][0].softmax(-1)[..., 1].sort(descending=True)[1][:top_k]
 
             orig_target_sizes = torch.stack([targets["orig_size"]], dim=0)
             results = postprocessors['bbox'](outputs, orig_target_sizes)
