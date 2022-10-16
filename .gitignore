@@ -9,3 +9,4 @@ gen
 /voc_data/
 /test_block.py
 /checkpoints/
+/pretrained_models/

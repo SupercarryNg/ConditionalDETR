@@ -102,12 +102,13 @@ def get_args_parser():
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
+    parser.add_argument('--use_pretrain_model', default='pretrained_models/ConditionalDETR_r50dc5_epoch50.pth')
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--visual', default=False, action='store_true')
-    parser.add_argument('--num_workers', default=8, type=int)
+    parser.add_argument('--num_workers', default=4, type=int)
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
@@ -138,6 +139,13 @@ def main(args):
 
     model, criterion, postprocessors = build_model(args)
     model.to(device)
+
+    if args.use_pretrain_model:
+        pretrain_model = torch.load(args.use_pretrain_model)
+        model_dict = model.state_dict()
+        state_dict = {k: v for k, v in pretrain_model['model'].items() if k in model_dict.keys()}
+        model_dict.update(state_dict)
+        model.load_state_dict(model_dict)
 
     model_without_ddp = model
     if args.distributed:

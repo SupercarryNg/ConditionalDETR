@@ -47,8 +47,8 @@ class ConditionalDETR(nn.Module):
         self.num_queries = num_queries
         self.transformer = transformer
         hidden_dim = transformer.d_model
-        self.class_embed = nn.Linear(hidden_dim, num_classes)
-        self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        self.class_embedding = nn.Linear(hidden_dim, num_classes)
+        self.bbox_embedding = MLP(hidden_dim, hidden_dim, 4, 3)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.input_proj = nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1)
 
@@ -61,12 +61,12 @@ class ConditionalDETR(nn.Module):
         # init prior_prob setting for focal loss
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
-        self.class_embed.bias.data = torch.ones(num_classes) * bias_value
+        self.class_embedding.bias.data = torch.ones(num_classes) * bias_value
         self.nc_class_embed.bias.data = torch.ones(1) * bias_value
 
         # init bbox_mebed
-        nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
-        nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
+        nn.init.constant_(self.bbox_embedding.layers[-1].weight.data, 0)
+        nn.init.constant_(self.bbox_embedding.layers[-1].bias.data, 0)
 
     def forward(self, samples: NestedTensor):
         """ The forward expects a NestedTensor, which consists of:
@@ -97,12 +97,12 @@ class ConditionalDETR(nn.Module):
         outputs_coords = []
         outputs_classes_nc = []
         for lvl in range(hs.shape[0]):
-            tmp = self.bbox_embed(hs[lvl])
+            tmp = self.bbox_embedding(hs[lvl])
             tmp[..., :2] += reference_before_sigmoid
             outputs_coord = tmp.sigmoid()
             outputs_coords.append(outputs_coord)
 
-            outputs_class = self.class_embed(hs[lvl])
+            outputs_class = self.class_embedding(hs[lvl])
             outputs_classes.append(outputs_class)
 
             outputs_class_nc = self.nc_class_embed(hs[lvl])
