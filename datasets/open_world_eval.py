@@ -3,28 +3,32 @@ import os
 from collections import defaultdict
 
 import numpy as np
-
+import torch
 
 class OWEvaluator:
     # voc_gt 裏有 CLASS Names，image set， known classes
-    def __init__(self, voc_gt):
+    def __init__(self, voc_gt, ovthresh=list(range(50, 100, 5))):
         self.lines = []
         self.lines_cls = []
 
         self.voc_gt = voc_gt
         self.known_classes = self.voc_gt.CLASS_NAMES
+        self.ovthresh = ovthresh
 
         self.rec = []
+        self.prec = []
         self.unk_det_as_known = []
         self.tp_plus_fp_closed_set = []
         self.fp_open_set = []
 
+        self.AP = torch.zeros(len(self.known_classes), 1)
         self.all_recs = defaultdict(list)
+        self.all_precs = defaultdict(list)
         self.tp_plus_fp_cs = defaultdict(list)
         self.fp_os = defaultdict(list)
 
         self.unk_det_as_knowns = defaultdict(list)
-        self.num_seen_classes = len(self.known_classes)
+        self.num_seen_classes = len(self.known_classes) - 1
 
     def update(self, predictions):
         # for img_id, pred in predictions.items():
@@ -73,6 +77,31 @@ class OWEvaluator:
                 wi_at_iou[iou] = 0
         return wi_at_iou
 
+# TODO: update to git
+    def compute_avg_precision_at_many_recall_level_for_unk(self, precisions, recalls):
+        precs = {}
+        for r in range(1, 10):
+            r = r/10
+            p = self.compute_avg_precision_at_a_recall_level_for_unk(precisions, recalls, recall_level=r)
+            precs[r] = p
+        return precs
+
+# TODO: update to git
+    def compute_avg_precision_at_a_recall_level_for_unk(self, precisions, recalls, recall_level=0.5):
+        precs = {}
+        for iou, recall in recalls.items():
+            prec = []
+            for cls_id, rec in enumerate(recall):
+                if cls_id == 17 and len(rec)>0:
+                    p = precisions[iou][cls_id][min(range(len(rec)), key=lambda i: abs(rec[i] - recall_level))]
+                    prec.append(p)
+            if len(prec) > 0:
+                precs[iou] = np.mean(prec)
+            else:
+                precs[iou] = 0
+        return precs
+
+
     def accumulate(self):
         for class_label, class_label_ind in self.voc_gt.CLASS_NAMES.items():
             '''
@@ -85,24 +114,32 @@ class OWEvaluator:
             print(class_label + " has " + str(len(lines_by_class)) + " predictions.")
 
             ovthresh = 50
-
-            self.rec, self.unk_det_as_known, self.tp_plus_fp_closed_set, self.fp_open_set = voc_eval(lines_by_class,
-                                                                                                     class_label,
+            ovthresh_ind, _ = map(self.ovthresh.index, [50, 75])
+            self.rec, self.prec, self.AP[class_label_ind, ovthresh_ind], self.unk_det_as_known, self.tp_plus_fp_closed_set, self.fp_open_set = voc_eval(lines_by_class,
+                                                                                                     class_label_ind,
                                                                                                      self.voc_gt.image_set,
                                                                                                      self.voc_gt.annotations,
                                                                                                      ovthresh=ovthresh / 100,
                                                                                                      )
             self.all_recs[ovthresh].append(self.rec)
+            self.all_precs[ovthresh].append(self.prec)
             if class_label != 'unknown':
                 self.tp_plus_fp_cs[ovthresh].append(self.tp_plus_fp_closed_set)
                 self.fp_os[ovthresh].append(self.fp_open_set)
                 self.unk_det_as_knowns[ovthresh].append(self.unk_det_as_known)
-
-    def summarize(self):
+#TODO: update to git
+    def summarize(self, fmt='{:.06f}'):
+        o50, _ = map(self.ovthresh.index, [50, 75])
         wi = self.compute_WI_at_many_recall_level(self.all_recs, self.tp_plus_fp_cs, self.fp_os)
         print('Wilderness Impact: ' + str(wi))
         total_num_unk_det_as_known = {iou: np.sum(x) for iou, x in self.unk_det_as_knowns.items()}
         print('Absolute OSE (total_num_unk_det_as_known): ' + str(total_num_unk_det_as_known))
+        avg_precision_unk = self.compute_avg_precision_at_many_recall_level_for_unk(self.all_precs, self.all_recs)
+        print('avg_precision: ' + str(avg_precision_unk))
+        mAP = float(self.AP.mean())
+        print('detection mAP:', fmt.format(mAP))
+        for class_name, ap in zip(self.voc_gt.CLASS_NAMES, self.AP[:, o50].cpu().tolist()):
+            print(class_name, fmt.format(ap))
 
 
 # assumes detections are in detpath.format(classname)
@@ -149,7 +186,23 @@ def iou(BBGT, bb):
     jmax = np.argmax(overlaps)
     return ovmax, jmax
 
+def voc_ap(rec, prec):
+    # correct AP calculation
+    # first append sentinel values at the end
+    mrec = np.concatenate(([0.], rec, [1.]))
+    mpre = np.concatenate(([0.], prec, [0.]))
 
+    # compute the precision envelope
+    for i in range(mpre.size - 1, 0, -1):
+        mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
+
+    # to calculate area under PR curve, look for points
+    # where X axis (recall) changes value
+    i = np.where(mrec[1:] != mrec[:-1])[0]
+
+    # and sum (\Delta recall) * prec
+    ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
+    return ap
 def voc_eval(detpath,
              classname,
              imagepath='voc_data/images/test',
@@ -251,7 +304,9 @@ def voc_eval(detpath,
     # tp = [1,1,0,1,0,1,0,1,0,1,1]
     tp = np.cumsum(tp)
     # tp = [1,2,2,3,3,4,4,5,5,6,7,...,75], 75 的idx 130
-    rec = tp / float(npos)
+    rec = tp / np.maximum(float(npos), np.finfo(np.float64).eps)
+    prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
+    ap = voc_ap(rec, prec)
     # avoid divide by zero in case the first detection matches a difficult
 
     # Finding GT of unknown objects
@@ -259,15 +314,15 @@ def voc_eval(detpath,
     n_unk = 0
     for imagename in imagenames:
         # 'unknown' -1
-        R = [obj for obj in recs[imagename] if obj["name"] == 'unknown']
+        R = [obj for obj in recs[imagename] if obj["name"] == classname]
         bbox = np.array([x["bbox"] for x in R])
         difficult = np.array([x["difficult"] for x in R]).astype(np.bool)
         det = [False] * len(R)
         n_unk = n_unk + sum(~difficult)
         unknown_class_recs[imagename] = {"bbox": bbox, "difficult": difficult, "det": det}
 
-    if classname == 'unknown':
-        return rec, None, None, None
+    if classname == 17:
+        return rec,prec,ap, None, None, None
 
     # Go down each detection and see if it has an overlap with an unknown object.
     # If so, it is an unknown object that was classified as known.
@@ -289,7 +344,7 @@ def voc_eval(detpath,
     tp_plus_fp_closed_set = tp + fp
     fp_open_set = np.cumsum(is_unk)
 
-    return rec, is_unk_sum, tp_plus_fp_closed_set, fp_open_set
+    return rec,prec,ap, is_unk_sum, tp_plus_fp_closed_set, fp_open_set
 
 
 # if __name__ == '__main__':
